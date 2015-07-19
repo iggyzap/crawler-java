@@ -6,12 +6,15 @@ import com.beust.jcommander.Parameter;
 import java.io.File;
 import java.net.URL;
 import java.util.List;
+import java.util.concurrent.*;
 
 /**
  * Main entry point for the crawler engine
  */
 public class Main {
 
+
+    public static final int IO_QUEUE_SIZING_FACTOR = 2;
 
     public static class Args {
         @Parameter(names = {"-v", "--debug"}, description = "Verbose mode")
@@ -23,9 +26,14 @@ public class Main {
         @Parameter(description = "<url to process>+", required = true)
         public List<URL> inputUrls;
 
-        @Parameter(names = {"-h", "--help"}, help = true)
+        @Parameter(names = {"-rs", "--io-pool-size"}, description = "Number of concurrent io threads")
+        public int ioPoolSize = 10;
+
+        @Parameter(names = {"-h", "--help"}, help = true, description = "Displays help")
         public boolean showHelp;
 
+        @Parameter(names = {"-cs", "--cpu-pool-size"}, description = "Number of concurrent processing tasks")
+        public int cpuPoolSize = 2;
     }
 
     public static void main(String... args) {
@@ -43,11 +51,28 @@ public class Main {
 
     }
 
+
+    private BlockingQueue<Runnable> ioBoundQueue;
+    private ExecutorService ioBoundService;
+    private ExecutorService cpuBoundService;
+    private BlockingQueue<Runnable> cpuBoundQueue;
+
     public Main(Args parsedArgs) {
         execute(parsedArgs);
     }
 
     protected void execute(Args parsedArgs) {
-        //does nothing now
+        ioBoundQueue = new LinkedBlockingDeque<>(parsedArgs.ioPoolSize * IO_QUEUE_SIZING_FACTOR);
+        ioBoundService = new ThreadPoolExecutor(parsedArgs.ioPoolSize, parsedArgs.ioPoolSize, 0, TimeUnit.SECONDS, ioBoundQueue, new ThreadPoolExecutor.CallerRunsPolicy());
+
+        //we don't put bound for cpu-constrained tasks, for now...
+        cpuBoundQueue = new LinkedBlockingQueue<>();
+        cpuBoundService = new ThreadPoolExecutor(parsedArgs.cpuPoolSize, parsedArgs.cpuPoolSize, 0, TimeUnit.SECONDS, cpuBoundQueue);
+
+
+        System.out.println(String.format("Found %1$s image urls", new UrlDiscovererImpl(ioBoundService).discover(parsedArgs.inputUrls)));
     }
+
+
+
 }

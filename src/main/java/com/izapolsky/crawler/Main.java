@@ -20,7 +20,7 @@ public class Main {
         @Parameter(names = {"-o", "--output-dir"}, description = "Output directory", required = true)
         public File outputDir;
 
-        @Parameter(description = "Urls to process", required = true)
+        @Parameter(description = "<url to process>+", required = true)
         public List<URL> inputUrls;
 
         @Parameter(names = {"-h", "--help"}, help = true)
@@ -29,9 +29,9 @@ public class Main {
     }
 
     public static void main(String... args) {
-        JCommander jc = new JCommander();
-        jc.setProgramName(Main.class.toString());
         Args parsedCmdLine = new Args();
+        JCommander jc = new JCommander(parsedCmdLine);
+        jc.setProgramName(Main.class.getName());
         jc.parse(args);
 
         if (parsedCmdLine.showHelp) {

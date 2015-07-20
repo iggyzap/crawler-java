@@ -1,6 +1,9 @@
 package com.izapolsky.crawler;
 
+import com.beust.jcommander.ParameterException;
 import org.junit.Test;
+
+import java.util.UUID;
 
 import static org.junit.Assert.assertNull;
 
@@ -30,6 +33,11 @@ public class MainTest {
 
     @Test
     public void testFindsRose() throws Exception {
-        Main.main("-o", System.getProperty("java.io.tmpdir"), getClass().getResource("/sample.html").toString());
+        Main.main("--keep-going", "-o", System.getProperty("java.io.tmpdir"), getClass().getResource("/sample.html").toString());
+    }
+
+    @Test (expected = ParameterException.class)
+    public void testFailsIfRandomDir() throws Exception {
+       Main.main("--keep-going", "-o", UUID.randomUUID().toString());
     }
 }

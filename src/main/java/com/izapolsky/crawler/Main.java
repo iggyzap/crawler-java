@@ -1,8 +1,6 @@
 package com.izapolsky.crawler;
 
-import com.beust.jcommander.IStringConverter;
-import com.beust.jcommander.JCommander;
-import com.beust.jcommander.Parameter;
+import com.beust.jcommander.*;
 
 import java.io.File;
 import java.net.MalformedURLException;
@@ -17,6 +15,16 @@ public class Main {
 
 
     public static final int IO_QUEUE_SIZING_FACTOR = 2;
+
+    public static class WritableDirValidator implements IValueValidator<File> {
+        @Override
+        public void validate(String name, File value) throws ParameterException {
+            if (!value.isDirectory() || !value.canWrite()) {
+                throw new ParameterException(String.format("Parameter %1$s (%2$s) has to be writeable directory", name, value.getAbsolutePath()));
+            }
+        }
+    }
+
 
     public static class URLConverter implements IStringConverter<URL> {
         @Override
@@ -33,7 +41,7 @@ public class Main {
         @Parameter(names = {"-v", "--debug"}, description = "Verbose mode")
         public boolean debug;
 
-        @Parameter(names = {"-o", "--output-dir"}, description = "Output directory", required = true)
+        @Parameter(names = {"-o", "--output-dir"}, description = "Output directory", required = true, validateValueWith = WritableDirValidator.class)
         public File outputDir;
 
         @Parameter(description = "<url to process>+", required = true, converter = URLConverter.class)
@@ -47,6 +55,9 @@ public class Main {
 
         @Parameter(names = {"-cs", "--cpu-pool-size"}, description = "Number of concurrent processing tasks")
         public int cpuPoolSize = 2;
+
+        @Parameter(names = "--keep-going", description = "Do not kill JVM on exit", hidden = true)
+        public boolean keepGoing = false;
     }
 
     public static void main(String... args) {
@@ -62,7 +73,9 @@ public class Main {
 
         new Main(parsedCmdLine);
 
-        System.exit(0);
+        if (!parsedCmdLine.keepGoing) {
+            System.exit(0);
+        }
     }
 
 
@@ -83,10 +96,13 @@ public class Main {
         cpuBoundQueue = new LinkedBlockingQueue<>();
         cpuBoundService = new ThreadPoolExecutor(parsedArgs.cpuPoolSize, parsedArgs.cpuPoolSize, 0, TimeUnit.SECONDS, cpuBoundQueue);
 
+        List<Pair<URL, String>> images = new UrlDiscovererImpl(ioBoundService).discover(parsedArgs.inputUrls);
 
-        System.out.println(String.format("Found %1$s image urls", new UrlDiscovererImpl(ioBoundService).discover(parsedArgs.inputUrls).size()));
+        System.out.println(String.format("Found %1$s image urls, total %2$s", images, images.size()));
+
+//        MoreExecutors.
+
     }
-
 
 
 }

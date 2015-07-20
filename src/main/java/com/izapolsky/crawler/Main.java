@@ -1,12 +1,26 @@
 package com.izapolsky.crawler;
 
 import com.beust.jcommander.*;
+import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.commons.io.FileUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpHeaders;
+import org.apache.http.HttpStatus;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
 
 import java.io.File;
+import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.net.MalformedURLException;
 import java.net.URL;
-import java.util.List;
+import java.nio.channels.FileLock;
+import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Main entry point for the crawler engine
@@ -98,10 +112,126 @@ public class Main {
 
         List<Pair<URL, String>> images = new UrlDiscovererImpl(ioBoundService).discover(parsedArgs.inputUrls);
 
+        //upper bound
+        List<Future<String>> results = new ArrayList<>(images.size());
+
         System.out.println(String.format("Found %1$s image urls, total %2$s", images, images.size()));
+        CloseableHttpClient chc = HttpClients.createDefault();
+        for (Pair<URL, String> imageInfo : images) {
+            results.add(ioBoundService.submit(() -> {
+                URL imageUrl = new URL(imageInfo.second);
+                String mangledName = mangle(imageUrl);
+                File destinationFile = new File(parsedArgs.outputDir, mangledName);
+                File propertiesFile = new File(parsedArgs.outputDir, mangledName + ".properties");
+                try (RandomAccessFile raf = new RandomAccessFile(propertiesFile, "rw")) {
+                    FileLock l = raf.getChannel().tryLock();
+                    try {
+                        if (l == null) {
+                            return "-1";
+                        }
 
-//        MoreExecutors.
+                        Pair<Boolean, Properties> imageInfo1 = readOrCreate(propertiesFile, imageUrl);
+                        boolean modified = false;
+                        try {
+                            HttpGet imageGet = new HttpGet(imageUrl.toURI());
+                            imageGet.setConfig(RequestConfig.DEFAULT);
+                            if (imageInfo1.second.containsKey(HttpHeaders.ETAG)) {
+                                imageGet.addHeader(HttpHeaders.IF_NONE_MATCH, imageInfo1.second.getProperty(HttpHeaders.ETAG));
+                            }
+                            try (CloseableHttpResponse response = chc.execute(imageGet)) {
+                                if (response.getStatusLine().getStatusCode() == HttpStatus.SC_NOT_MODIFIED) {
+                                    return String.valueOf(HttpStatus.SC_NOT_MODIFIED);
+                                }
 
+                                if (response.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
+                                    HttpEntity entity = response.getEntity();
+                                    try (InputStream is = entity.getContent()) {
+                                        FileUtils.copyInputStreamToFile(is, destinationFile);
+                                        if (response.containsHeader(HttpHeaders.ETAG)) {
+                                            //todo might have multiple etag headers
+                                            imageInfo1.second.setProperty(HttpHeaders.ETAG, response.getFirstHeader(HttpHeaders.ETAG).getValue());
+                                        }
+                                        modified = true;
+                                    }
+                                    return String.valueOf(HttpStatus.SC_OK);
+                                }
+
+                                return "-2";
+                            }
+                        } finally {
+                            if (modified) {
+                                writeProps(imageInfo1.second);
+                            }
+                        }
+                    } finally {
+                        if (l != null) {
+                            l.close();
+                        }
+                    }
+
+                }
+            }));
+        }
+
+        Map<String, AtomicInteger> codes = new HashMap<>();
+
+        for (Future<String> future : results) {
+            try {
+                increment(codes, future.get());
+            } catch(Throwable e) {
+                e.printStackTrace();
+                increment(codes, "-3");
+            }
+        }
+        System.out.println(String.format("Stats of processing : %1$s", codes));
+
+    }
+
+    private void increment(Map<String, AtomicInteger> codes, String s) {
+        AtomicInteger value = codes.get(s);
+        if (value == null) {
+            value = new AtomicInteger(0);
+            codes.put(s, value);
+        }
+
+        value.incrementAndGet();
+    }
+
+    private void writeProps(Properties second) {
+        throw new UnsupportedOperationException("FIx me!");
+    }
+
+    private Pair<Boolean, Properties> readOrCreate(File propertiesFile, URL imageUrl) {
+        throw new UnsupportedOperationException("Fix me!");
+    }
+
+    protected static String mangle(URL imageUrl) {
+        //we exclude query part from image uri
+        try {
+            int port = imageUrl.getPort() == -1 ? detectPort(imageUrl.getProtocol()) : imageUrl.getPort();
+            return DigestUtils.sha256Hex(new URL(imageUrl.getProtocol(), imageUrl.getHost(), port, imageUrl.getPath(), null).toString());
+        } catch (MalformedURLException e) {
+            throw new RuntimeException(String.format("Failed to construct url %1$s", imageUrl), e);
+        }
+    }
+
+    /**
+     * Detects port for few known protocols
+     *
+     * @param protocol
+     * @return
+     */
+    private static int detectPort(String protocol) {
+        if ("http".equals(protocol)) {
+            return 80;
+        }
+        if ("https".equals(protocol)) {
+            return 443;
+        }
+        if ("file".equals(protocol)) {
+            return 0;
+        }
+        throw new IllegalArgumentException(String.format("I don't know about protocol %1$s", protocol));
     }
 
 

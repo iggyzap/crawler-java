@@ -27,4 +27,9 @@ public class MainTest {
             assertNull("execute should not be called", argsFromExecute);
         }
     }
+
+    @Test
+    public void testFindsRose() throws Exception {
+        Main.main("-o", System.getProperty("java.io.tmpdir"), getClass().getResource("/sample.html").toString());
+    }
 }

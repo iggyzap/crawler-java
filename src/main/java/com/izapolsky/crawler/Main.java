@@ -3,6 +3,7 @@ package com.izapolsky.crawler;
 import com.beust.jcommander.*;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpHeaders;
 import org.apache.http.HttpStatus;
@@ -12,9 +13,7 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 
-import java.io.File;
-import java.io.InputStream;
-import java.io.RandomAccessFile;
+import java.io.*;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.channels.FileLock;
@@ -156,11 +155,11 @@ public class Main {
                                     return String.valueOf(HttpStatus.SC_OK);
                                 }
 
-                                return "-2";
+                                return String.valueOf(response.getStatusLine().getStatusCode());
                             }
                         } finally {
                             if (modified) {
-                                writeProps(imageInfo1.second);
+                                writeProps(propertiesFile, imageInfo1.second);
                             }
                         }
                     } finally {
@@ -178,7 +177,7 @@ public class Main {
         for (Future<String> future : results) {
             try {
                 increment(codes, future.get());
-            } catch(Throwable e) {
+            } catch (Throwable e) {
                 e.printStackTrace();
                 increment(codes, "-3");
             }
@@ -197,12 +196,38 @@ public class Main {
         value.incrementAndGet();
     }
 
-    private void writeProps(Properties second) {
-        throw new UnsupportedOperationException("FIx me!");
+    protected void writeProps(File propertiesFIle, Properties what) {
+        FileOutputStream fos = null;
+        try {
+            fos = new FileOutputStream(propertiesFIle);
+            what.store(fos, String.format("Change on %1$s", new Date()));
+        } catch (Throwable e) {
+            throw new RuntimeException(String.format("Failed writing to %1$s", propertiesFIle.getAbsolutePath()), e);
+        } finally {
+            IOUtils.closeQuietly(fos);
+        }
     }
 
-    private Pair<Boolean, Properties> readOrCreate(File propertiesFile, URL imageUrl) {
-        throw new UnsupportedOperationException("Fix me!");
+    protected Pair<Boolean, Properties> readOrCreate(File propertiesFile, URL imageUrl) {
+        Properties result = new Properties();
+        boolean created = false;
+        if (!propertiesFile.isFile()) {
+            result.setProperty("image-uri", imageUrl.toString());
+            writeProps(propertiesFile, result);
+            created = true;
+        } else {
+            FileInputStream fis = null;
+            try {
+                fis = new FileInputStream(propertiesFile);
+                result.load(fis);
+            } catch (Throwable e) {
+                throw new RuntimeException(String.format("Failed to read %1$s", propertiesFile), e);
+            } finally {
+                IOUtils.closeQuietly(fis);
+            }
+        }
+
+        return new Pair<>(created, result);
     }
 
     protected static String mangle(URL imageUrl) {

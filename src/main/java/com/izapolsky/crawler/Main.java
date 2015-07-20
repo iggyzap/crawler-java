@@ -62,6 +62,7 @@ public class Main {
 
         new Main(parsedCmdLine);
 
+        System.exit(0);
     }
 
 

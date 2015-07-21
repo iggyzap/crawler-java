@@ -15,6 +15,7 @@ import org.apache.http.impl.client.HttpClients;
 
 import java.io.*;
 import java.net.MalformedURLException;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.channels.FileLock;
 import java.util.*;
@@ -132,31 +133,15 @@ public class Main {
                         Pair<Boolean, Properties> imageInfo1 = readOrCreate(propertiesFile, imageUrl);
                         boolean modified = false;
                         try {
-                            HttpGet imageGet = new HttpGet(imageUrl.toURI());
-                            imageGet.setConfig(RequestConfig.DEFAULT);
-                            if (imageInfo1.second.containsKey(HttpHeaders.ETAG)) {
-                                imageGet.addHeader(HttpHeaders.IF_NONE_MATCH, imageInfo1.second.getProperty(HttpHeaders.ETAG));
-                            }
-                            try (CloseableHttpResponse response = chc.execute(imageGet)) {
-                                if (response.getStatusLine().getStatusCode() == HttpStatus.SC_NOT_MODIFIED) {
-                                    return String.valueOf(HttpStatus.SC_NOT_MODIFIED);
+                            Pair<Pair<Boolean, String>, InputStream> fetchResult = fetch(chc, imageInfo1.second, imageUrl);
+                            if (fetchResult.first.first) {
+                                try (InputStream is = fetchResult.second) {
+                                    FileUtils.copyInputStreamToFile(is, destinationFile);
+                                    modified = true;
                                 }
-
-                                if (response.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
-                                    HttpEntity entity = response.getEntity();
-                                    try (InputStream is = entity.getContent()) {
-                                        FileUtils.copyInputStreamToFile(is, destinationFile);
-                                        if (response.containsHeader(HttpHeaders.ETAG)) {
-                                            //todo might have multiple etag headers
-                                            imageInfo1.second.setProperty(HttpHeaders.ETAG, response.getFirstHeader(HttpHeaders.ETAG).getValue());
-                                        }
-                                        modified = true;
-                                    }
-                                    return String.valueOf(HttpStatus.SC_OK);
-                                }
-
-                                return String.valueOf(response.getStatusLine().getStatusCode());
                             }
+
+                            return fetchResult.first.second;
                         } finally {
                             if (modified) {
                                 writeProps(propertiesFile, imageInfo1.second);
@@ -184,6 +169,47 @@ public class Main {
         }
         System.out.println(String.format("Stats of processing : %1$s", codes));
 
+    }
+
+    protected Pair<Pair<Boolean, String>, InputStream> fetch(CloseableHttpClient chc, Properties props, URL url) {
+        try {
+            if (isLocal(url)) {
+                return new Pair<>(new Pair<>(true, String.valueOf(HttpStatus.SC_OK)), url.openStream());
+            }
+
+            HttpGet imageGet = new HttpGet(url.toURI());
+            imageGet.setConfig(RequestConfig.DEFAULT);
+            if (props.containsKey(HttpHeaders.ETAG)) {
+                imageGet.addHeader(HttpHeaders.IF_NONE_MATCH, props.getProperty(HttpHeaders.ETAG));
+            }
+
+            //todo can be a problem when we close response before write image from stream
+            CloseableHttpResponse response = chc.execute(imageGet);
+            if (response.getStatusLine().getStatusCode() == HttpStatus.SC_NOT_MODIFIED) {
+                return new Pair<>(new Pair<>(false, String.valueOf(HttpStatus.SC_NOT_MODIFIED)), null);
+            }
+
+            if (response.getStatusLine().getStatusCode() == HttpStatus.SC_OK) {
+                HttpEntity entity = response.getEntity();
+                if (response.containsHeader(HttpHeaders.ETAG)) {
+                    //todo might have multiple etag headers
+                    props.setProperty(HttpHeaders.ETAG, response.getFirstHeader(HttpHeaders.ETAG).getValue());
+                }
+                return new Pair<>(new Pair<>(true, String.valueOf(HttpStatus.SC_OK)), entity.getContent());
+            }
+
+            return new Pair<>(new Pair<>(false, String.valueOf(response.getStatusLine().getStatusCode())), null);
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new Pair<>(new Pair<>(false, "-2"), null);
+        } catch (URISyntaxException e) {
+            throw new RuntimeException(String.format("Failed to parse URI %1$s", url), e);
+        }
+    }
+
+    protected boolean isLocal(URL url) {
+        return "file".equals(url.getProtocol());
     }
 
     private void increment(Map<String, AtomicInteger> codes, String s) {

@@ -17,6 +17,7 @@ import java.net.MalformedURLException;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -50,8 +51,9 @@ public class UrlFetcherImpl implements UrlFetcher {
                 File destinationFile = new File(outputDir, mangledName);
                 File propertiesFile = new File(outputDir, mangledName + ".properties");
                 try (RandomAccessFile raf = new RandomAccessFile(propertiesFile, "rw")) {
-                    FileLock l = raf.getChannel().tryLock();
+                    FileLock l = null;
                     try {
+                        l = raf.getChannel().tryLock();
                         if (l == null) {
                             return SC_SKIPPED_CONCURRENCY;
                         }
@@ -75,7 +77,11 @@ public class UrlFetcherImpl implements UrlFetcher {
                                 writeProps(propertiesFile, imageInfo1.second);
                             }
                         }
+                    } catch (OverlappingFileLockException e) {
+                        new RuntimeException(String.format("URL %1$s already being processed", imageUrl), e).printStackTrace();
+                        return SC_SKIPPED_CONCURRENCY;
                     } finally {
+
                         if (l != null) {
                             l.close();
                         }

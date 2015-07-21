@@ -40,7 +40,7 @@ public class UrlFetcherImpl implements UrlFetcher {
     }
 
     @Override
-    public List<Future<String>> downloadImages(List<Pair<URL, String>> images) {
+    public List<Future<String>> downloadImages(List<Pair<URL, String>> images, ImageFetchedCallback callback) {
 
         List<Future<String>> results = new ArrayList<>(images.size());
 
@@ -48,6 +48,7 @@ public class UrlFetcherImpl implements UrlFetcher {
             results.add(ioBoundService.submit(() -> {
                 URL imageUrl = new URL(imageInfo.second);
                 String mangledName = mangle(imageUrl);
+                boolean modified = false;
                 File destinationFile = new File(outputDir, mangledName);
                 File propertiesFile = new File(outputDir, mangledName + ".properties");
                 try (RandomAccessFile raf = new RandomAccessFile(propertiesFile, "rw")) {
@@ -59,7 +60,6 @@ public class UrlFetcherImpl implements UrlFetcher {
                         }
 
                         Pair<Boolean, Properties> imageInfo1 = readOrCreate(propertiesFile, imageUrl);
-                        boolean modified = false;
                         InputStream toClose = null;
                         try {
                             Pair<Pair<Boolean, String>, InputStream> fetchResult = fetch(chc, imageInfo1.second, imageUrl);
@@ -81,9 +81,16 @@ public class UrlFetcherImpl implements UrlFetcher {
                         new RuntimeException(String.format("URL %1$s already being processed", imageUrl), e).printStackTrace();
                         return SC_SKIPPED_CONCURRENCY;
                     } finally {
-
                         if (l != null) {
                             l.close();
+                        }
+                        try {
+                            if (modified && callback != null) {
+                                callback.notifyImageDownloaded(imageUrl, destinationFile);
+                            }
+                        } catch (Throwable  e) {
+                            //we'll swallow exception
+                            e.printStackTrace();
                         }
                     }
                 }
@@ -114,7 +121,7 @@ public class UrlFetcherImpl implements UrlFetcher {
             }
 
             //todo can be a problem when we close response before write image from stream
-            //unfortunately there is mixed responsibility in whe we should close requests due to commons-http API
+            //unfortunately there is mixed responsibility in when we should close requests due to commons-http API
             CloseableHttpResponse response = chc.execute(imageGet);
             if (response.getStatusLine().getStatusCode() == HttpStatus.SC_NOT_MODIFIED) {
                 return new Pair<>(new Pair<>(false, String.valueOf(HttpStatus.SC_NOT_MODIFIED)), null);

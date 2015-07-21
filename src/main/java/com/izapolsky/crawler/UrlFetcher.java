@@ -18,5 +18,5 @@ public interface UrlFetcher {
      * @param imageInfo
      * @return
      */
-    List<Future<String>> downloadImages(List<Pair<URL, String>> imageInfo);
+    List<Future<String>> downloadImages(List<Pair<URL, String>> imageInfo, ImageFetchedCallback callback);
 }

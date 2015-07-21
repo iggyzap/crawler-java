@@ -2,7 +2,12 @@ package com.izapolsky.crawler;
 
 import com.beust.jcommander.*;
 
+import javax.imageio.ImageIO;
+import java.awt.geom.AffineTransform;
+import java.awt.image.AffineTransformOp;
+import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.HashMap;
@@ -100,8 +105,27 @@ public class Main {
 
         List<Pair<URL, String>> images = new UrlDiscovererImpl(ioBoundService).discover(parsedArgs.inputUrls);
 
-        //upper bound
-        List<Future<String>> results = new UrlFetcherImpl(ioBoundService, parsedArgs.outputDir).downloadImages(images);
+
+        List<Future<String>> results = new UrlFetcherImpl(ioBoundService, parsedArgs.outputDir).downloadImages(images, (url, file) -> {
+            cpuBoundService.submit(() -> {
+                try {
+                    BufferedImage image = ImageIO.read(file);
+                    if (image.getHeight() <= 10 || image.getWidth() <= 10) {
+                        return;
+                    }
+
+                    for (int width : new int[]{320, 220, 100}) {
+                        image = getScaledImage(image, width);
+
+
+                        writeImage(image, "png", new File(file.getParent(), file.getName() + "x" + width + ".png"));
+                        writeImage(image, "jpeg", new File(file.getParent(), file.getName() + "x" + width + ".jpg"));
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException(String.format("Failed processing file %1$s for %2$s", file, url), e);
+                }
+            });
+        });
 
         System.out.println(String.format("Found %1$s image urls, total %2$s", images, images.size()));
 
@@ -118,11 +142,22 @@ public class Main {
             }
         }
         System.out.println(String.format("Stats of processing : %1$s", codes));
+        try {
+            cpuBoundService.shutdown();
+            cpuBoundService.awaitTermination(10, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            throw new RuntimeException("Failed to process all images", e);
+        }
+    }
 
+    private void writeImage(BufferedImage image, String png, File output) throws IOException {
+        System.out.println("Generating " + output);
+        ImageIO.write(image, png, output);
     }
 
     /**
      * Calculates statistics
+     *
      * @param codes
      * @param type
      */
@@ -134,6 +169,20 @@ public class Main {
         }
 
         value.incrementAndGet();
+    }
+
+    public static BufferedImage getScaledImage(BufferedImage image, int width) throws IOException {
+        int imageWidth = image.getWidth();
+        int imageHeight = image.getHeight();
+
+        double scaleX = (double) width / imageWidth;
+        int height = (int) Math.floor((double) imageHeight * scaleX);
+        AffineTransform scaleTransform = AffineTransform.getScaleInstance(scaleX, scaleX);
+        AffineTransformOp bilinearScaleOp = new AffineTransformOp(scaleTransform, AffineTransformOp.TYPE_BILINEAR);
+
+        return bilinearScaleOp.filter(
+                image,
+                new BufferedImage(width, height, image.getType()));
     }
 
 }
